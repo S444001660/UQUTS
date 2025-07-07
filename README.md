@@ -32,4 +32,4 @@ flutter run
 - Flutter 3.0.0 أو أحدث | or newer
 - Dart 3.0.0 أو أحدث | or newer
 - Android Studio / VS Code
-- Android SDK / Xcode
+- Android SDK
