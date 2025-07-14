@@ -1,13 +1,23 @@
-import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:uuid/uuid.dart';
-import 'package:image_picker/image_picker.dart';
-import '../models/lab_model.dart';
-import '../services/database_service.dart';
-import 'add_device_screen.dart';
-import 'package:path_provider/path_provider.dart';
+// استيراد المكتبات الضرورية
+import 'dart:io'; // للتعامل مع الملفات (مثل صورة المعمل).
+import 'package:flutter/material.dart'; // مكتبة فلاتر الأساسية لبناء واجهة المستخدم.
+import 'package:uuid/uuid.dart'; // لتوليد معرفات فريدة (IDs).
+import 'package:image_picker/image_picker.dart'; // لاختيار الصور من الكاميرا أو المعرض.
 
+// --- ملاحظة: تأكد من أن هذه الاستيرادات تتوافق مع هيكل مشروعك ---
+import '../models/lab_model.dart'; // استيراد نموذج بيانات المعمل.
+import '../services/firebase_database_service.dart'; // خدمات قاعدة البيانات
+import '../utils/ui_helpers.dart'; // دوال مساعدة لعرض عناصر واجهة المستخدم (مثل SnackBar).
+import '../utils/validation_utils.dart'; // دوال للتحقق من صحة مدخلات الفورم.
+import '../utils/image_utils.dart'; // دوال مساعدة للتعامل مع الصور.
+import '../utils/device_form_constants.dart'; // ثوابت وقوائم مستخدمة في الفورم.
+import 'add_device_screen.dart'; // شاشة إضافة/تعديل جهاز.
+// -----------------------------------------------------------------
+
+/// ويدجت شاشة إضافة أو تعديل معمل، وهي StatefulWidget لأن حالتها تتغير.
 class AddLabScreen extends StatefulWidget {
+  /// متغير لتمرير بيانات معمل موجود مسبقًا في حال التعديل.
+  /// يكون 'null' عند إضافة معمل جديد.
   final LabModel? lab;
 
   const AddLabScreen({super.key, this.lab});
@@ -16,514 +26,184 @@ class AddLabScreen extends StatefulWidget {
   State<AddLabScreen> createState() => _AddLabScreenState();
 }
 
+//------------------------------------------------------------------------------
+
+/// كلاس الحالة (State) الخاص بـ AddLabScreen.
 class _AddLabScreenState extends State<AddLabScreen> {
+  // --- ثوابت لتنظيم الكود ---
+  // تستخدم لتوحيد المسافات وأبعاد العناصر في الواجهة.
+  static const double _defaultSpacing = 16.0;
+  static const double _buttonHeight = 50.0;
+  static const int _maxImageSizeBytes = 5 * 1024 * 1024; // 5 MB
+
+  //------------------------------------------------------------------------------
+
+  // --- مفاتيح ومتحكمات الفورم ---
+  // مفتاح للتحكم في حالة الفورم والتحقق من صحته.
   final _formKey = GlobalKey<FormState>();
-  final _labNumberController = TextEditingController();
-  final _notesController = TextEditingController();
-  final _locationUrlController = TextEditingController();
+  // متحكمات لربط حقول النص بالـ State.
+  late final TextEditingController _labNumberController;
+  late final TextEditingController _notesController;
+
+  //------------------------------------------------------------------------------
+
+  // --- متغيرات الحالة (State) ---
+  // لتخزين القيم التي يختارها المستخدم أو التي تتغير في الواجهة.
   String? _selectedCollege;
   String? _selectedDepartment;
   String? _selectedFloor;
+  String? _selectedType;
   LabStatus _labStatus = LabStatus.openWithDevices;
   bool _isLoading = false;
   File? _capturedImage;
-  double? _latitude;
-  double? _longitude;
+  String? _existingImageUrl;
 
-  final List<String> _types = [
-    'معمل',
-    'مكتب',
-    'قاعة',
-    'مستودع',
-    'أخرى',
-  ];
+  //------------------------------------------------------------------------------
 
-  String? _selectedType;
-
-  final List<String> _colleges = [
-    'كلية الهندسة',
-    'كلية الطب',
-    'كلية الحاسب الآلي',
-    'كلية العلوم',
-    'كلية الإدارة والاقتصاد',
-  ];
-
-  final Map<String, List<String>> _departments = {
-    'كلية الهندسة': [
-      'قسم الهندسة الكهربائية',
-      'قسم الهندسة المدنية',
-      'قسم الهندسة الميكانيكية',
-      'قسم الهندسة الصناعية',
-    ],
-    'كلية الطب': [
-      'قسم الطب البشري',
-      'قسم طب الأسنان',
-      'قسم العلوم الطبية التطبيقية',
-    ],
-    'كلية الحاسب الآلي': [
-      'قسم علوم الحاسب و الذكاء الاصطناعي',
-      'قسم هندسة البرمجيات',
-      'قسم الامن السيبراني',
-      'قسم هندسة الحاسب',
-      'قسم علم المعلومات'
-    ],
-    'كلية العلوم': [
-      'قسم الرياضيات',
-      'قسم الفيزياء',
-      'قسم الكيمياء',
-      'قسم الأحياء',
-    ],
-    'كلية الإدارة والاقتصاد': [
-      'قسم إدارة الأعمال',
-      'قسم المحاسبة',
-      'قسم الاقتصاد',
-      'قسم التسويق',
-    ],
-  };
-
-  final List<String> _floors = [
-    'الدور الأرضي',
-    'الدور الأول',
-    'الدور الثاني',
-    'الدور الثالث',
-  ];
-
+  /// دالة تُستدعى مرة واحدة عند بناء الويدجت لأول مرة.
+  /// تستخدم لتهيئة المتحكمات وتحميل البيانات الأولية.
   @override
   void initState() {
     super.initState();
-    if (widget.lab != null) {
-      _labNumberController.text = widget.lab!.labNumber;
-      _selectedFloor = widget.lab!.floorNumber;
-      _labStatus = widget.lab!.status;
-      _notesController.text = widget.lab!.notes;
-      _locationUrlController.text = widget.lab?.locationUrl ?? '';
-      _latitude = widget.lab?.latitude;
-      _longitude = widget.lab?.longitude;
-
-      // Set college first
-      setState(() {
-        _selectedCollege = widget.lab!.college;
-      });
-
-      // Then set department
-      if (_departments[widget.lab!.college]?.contains(widget.lab!.department) ??
-          false) {
-        setState(() {
-          _selectedDepartment = widget.lab!.department;
-        });
-      }
-
-      if (widget.lab!.imagePath != null) {
-        _capturedImage = File(widget.lab!.imagePath!);
-      }
-    }
+    // تهيئة المتحكمات هنا وتعبئتها بالبيانات الموجودة في حالة التعديل.
+    _labNumberController = TextEditingController(text: widget.lab?.labNumber);
+    _notesController = TextEditingController(text: widget.lab?.notes);
+    _loadExistingLabData();
   }
 
+  //------------------------------------------------------------------------------
+
+  /// دالة تُستدعى عند إزالة الويدجت، لتحرير الموارد ومنع تسرب الذاكرة.
   @override
   void dispose() {
     _labNumberController.dispose();
     _notesController.dispose();
-    _locationUrlController.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+  //------------------------------------------------------------------------------
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.lab != null ? 'تعديل معمل' : 'إضافة معمل'),
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: theme.colorScheme.onPrimary,
-          actions: [
-            if (_capturedImage != null)
-              IconButton(
-                icon: const Icon(Icons.delete),
-                onPressed: () {
-                  setState(() {
-                    _capturedImage = null;
-                  });
-                },
-              ),
-          ],
-        ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : Form(
-                key: _formKey,
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    // Lab Image Capture
-                    if (_capturedImage == null)
-                      ElevatedButton.icon(
-                        onPressed: _showImageSourceDialog,
-                        icon: const Icon(Icons.camera_alt),
-                        label: Text(_capturedImage == null
-                            ? 'التقاط صورة'
-                            : 'تغيير الصورة'),
-                      )
-                    else
-                      Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.file(
-                              _capturedImage!,
-                              height: 200,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                          Positioned(
-                            bottom: 8,
-                            right: 8,
-                            child: CircleAvatar(
-                              backgroundColor: Colors.black54,
-                              child: IconButton(
-                                icon: const Icon(Icons.zoom_out_map,
-                                    color: Colors.white),
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => Dialog(
-                                      child: InteractiveViewer(
-                                        child: Image.file(_capturedImage!),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'حالة المعمل',
-                              style: theme.textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 16),
-                            DropdownButtonFormField<LabStatus>(
-                              value: _labStatus,
-                              decoration: const InputDecoration(
-                                labelText: 'الحالة',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: const [
-                                DropdownMenuItem(
-                                  value: LabStatus.openWithDevices,
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.check_circle,
-                                          color: Colors.green),
-                                      SizedBox(width: 8),
-                                      Text('مفتوح مع أجهزة'),
-                                    ],
-                                  ),
-                                ),
-                                DropdownMenuItem(
-                                  value: LabStatus.openNoDevices,
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.warning, color: Colors.orange),
-                                      SizedBox(width: 8),
-                                      Text('يوجد مشكلة'),
-                                    ],
-                                  ),
-                                ),
-                                DropdownMenuItem(
-                                  value: LabStatus.closed,
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.cancel, color: Colors.red),
-                                      SizedBox(width: 8),
-                                      Text('مغلق'),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                              onChanged: (value) {
-                                setState(() {
-                                  _labStatus = value!;
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _labNumberController,
-                      decoration: const InputDecoration(
-                        labelText: 'رقم المعمل',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'الرجاء إدخال رقم المعمل';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      value: _selectedCollege,
-                      decoration: const InputDecoration(
-                        labelText: 'الكلية',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _colleges.map((college) {
-                        return DropdownMenuItem(
-                          value: college,
-                          child: Text(college),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedCollege = value;
-                          _selectedDepartment = null;
-                        });
-                      },
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'الرجاء اختيار الكلية';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    if (_selectedCollege != null) ...[
-                      DropdownButtonFormField<String>(
-                        value: _selectedDepartment,
-                        decoration: const InputDecoration(
-                          labelText: 'القسم',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: _buildDepartmentDropdownItems(),
-                        onChanged: (value) {
-                          setState(() {
-                            _selectedDepartment = value;
-                          });
-                        },
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'الرجاء اختيار القسم';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      value: _selectedFloor,
-                      decoration: const InputDecoration(
-                        labelText: 'الدور',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _floors.map((floor) {
-                        return DropdownMenuItem(
-                          value: floor,
-                          child: Text(floor),
-                        );
-                      }).toList(),
-                      onChanged: (value) =>
-                          setState(() => _selectedFloor = value),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'الرجاء اختيار الدور';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(
-                        labelText: 'نوع الموقع',
-                        border: OutlineInputBorder(),
-                      ),
-                      value: _selectedType,
-                      onChanged: (newValue) {
-                        setState(() {
-                          _selectedType = newValue!;
-                        });
-                      },
-                      items: _types
-                          .map((type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type),
-                              ))
-                          .toList(),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _notesController,
-                      decoration: const InputDecoration(
-                        labelText: 'ملاحظات',
-                        border: OutlineInputBorder(),
-                      ),
-                      maxLines: 3,
-                    ),
-                  ],
-                ),
-              ),
-        bottomNavigationBar: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_labStatus != LabStatus.closed)
-                  FilledButton.icon(
-                    onPressed: _isLoading ? null : _saveThenAddDevices,
-                    icon: const Icon(Icons.computer_outlined),
-                    label: const Text('حفظ وإضافة الأجهزة'),
-                  ),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: _isLoading ? null : _saveLab,
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : Text(widget.lab != null
-                          ? 'حفظ التغييرات'
-                          : 'إضافة المعمل'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+  /// دالة لملء متغيرات الحالة ببيانات معمل موجود مسبقًا (في وضع التعديل).
+  void _loadExistingLabData() {
+    final lab = widget.lab;
+    if (lab == null) return; // إذا كنا في وضع الإضافة، لا تفعل شيئًا.
+
+    // تعبئة متغيرات الحالة بالبيانات القادمة من كائن المعمل.
+    _selectedFloor = lab.floorNumber;
+    _labStatus = lab.status;
+    _selectedCollege = lab.college;
+    // التحقق من أن القسم لا يزال موجودًا في القائمة المحدثة قبل تحديده.
+    if (DeviceFormConstants.departments[lab.college]
+            ?.contains(lab.department) ??
+        false) {
+      _selectedDepartment = lab.department;
+    }
+    _selectedType = lab.type;
+    _existingImageUrl = lab.imagePath;
   }
 
-  Future<LabModel?> _saveLab() async {
-    if (!_formKey.currentState!.validate()) return null;
+  //------------------------------------------------------------------------------
 
+  /// دالة غير متزامنة لالتقاط صورة باستخدام الكاميرا مع التحقق من حجمها.
+  Future<void> _pickImage() async {
+    try {
+      final pickedImage = await ImageUtils.pickImage(
+        context: context,
+        source: ImageSource.camera,
+        maxSizeInBytes: _maxImageSizeBytes,
+      );
+
+      if (pickedImage != null) {
+        setState(() {
+          _capturedImage = pickedImage; // تخزين الصورة الملتقطة حديثًا.
+          _existingImageUrl = null; // حذف مرجع الصورة القديمة.
+        });
+      }
+    } catch (e) {
+      // عرض رسالة خطأ في حالة فشل التقاط الصورة أو تجاوز الحجم.
+      if (mounted) {
+        UIHelpers.showSnackBar(
+          context: context,
+          message: e is Exception
+              ? e.toString().replaceFirst('Exception: ', '')
+              : 'خطأ في اختيار الصورة',
+          type: SnackBarType.error,
+        );
+      }
+    }
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// دالة الحفظ الأساسية التي تحتوي على منطق التحقق والحفظ، لإعادة استخدامها.
+  Future<LabModel?> _performSave() async {
+    final isFormValid = _formKey.currentState?.validate() ?? false;
+    if (!isFormValid) {
+      UIHelpers.showSnackBar(
+        context: context,
+        message: 'يرجى التحقق من صحة البيانات',
+        type: SnackBarType.error,
+      );
+      return null;
+    }
+
+    // شرط يلزم المستخدم بالتقاط صورة إذا كان المعمل مغلقًا أو به مشكلة.
     if ((_labStatus == LabStatus.openNoDevices ||
             _labStatus == LabStatus.closed) &&
-        _capturedImage == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى التقاط صورة توضح المشكلة أو الإغلاق'),
-          backgroundColor: Colors.red,
-        ),
-      );
+        _capturedImage == null &&
+        _existingImageUrl == null) {
+      UIHelpers.showSnackBar(
+          context: context,
+          message: 'يرجى التقاط صورة للحالة الحالية للمعمل',
+          type: SnackBarType.error);
       return null;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      if (_selectedCollege == null ||
-          _selectedDepartment == null ||
-          _selectedFloor == null) {
-        throw Exception('الرجاء إكمال جميع البيانات المطلوبة');
-      }
+      final labId = widget.lab?.id ?? const Uuid().v4();
+      final now = DateTime.now();
+      String? finalImagePath;
 
-      List<String> deviceIds = [];
-      if (widget.lab != null) {
-        final devices = await DatabaseService.getDevices();
-        deviceIds = devices
-            .where((d) => d.labId == widget.lab!.id)
-            .map((d) => d.id)
-            .toList();
-      }
-
-      LabStatus status = widget.lab == null
-          ? (_labStatus == LabStatus.closed
-              ? LabStatus.closed
-              : LabStatus.openNoDevices)
-          : _labStatus;
-
-      String? imagePath;
+      // منطق تحديد مسار الصورة النهائي.
       if (_capturedImage != null) {
-        final appDir = await getApplicationDocumentsDirectory();
-        final imagesDir = Directory('${appDir.path}/lab_images');
-        await imagesDir.create(recursive: true);
-
-        final fileName =
-            '${widget.lab?.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final savedImage =
-            await _capturedImage!.copy('${imagesDir.path}/$fileName');
-        imagePath = savedImage.path;
+        // إذا التقط المستخدم صورة جديدة، يتم رفعها.
+        finalImagePath =
+            await FirebaseDatabaseService.uploadImageToFirebaseStorage(
+                _capturedImage!, 'lab_images/$labId');
+      } else if (_existingImageUrl != null &&
+          (_labStatus != LabStatus.openWithDevices)) {
+        // إذا كانت هناك صورة قديمة والمعمل ليس في الحالة الطبيعية، يتم الاحتفاظ بها.
+        finalImagePath = _existingImageUrl;
       }
 
-      final labId = widget.lab?.id ?? const Uuid().v4().toString();
-
-      final lab = LabModel(
+      // بناء كائن المعمل الجديد بالبيانات المحدثة.
+      final newLab = LabModel(
         id: labId,
-        labNumber: _labNumberController.text,
+        labNumber: _labNumberController.text.trim(),
         college: _selectedCollege!,
         department: _selectedDepartment!,
         floorNumber: _selectedFloor!,
-        status: status,
-        notes: _notesController.text,
-        deviceIds: deviceIds,
-        imagePath: imagePath ?? widget.lab?.imagePath,
-        createdAt: widget.lab?.createdAt ?? DateTime.now(),
-        updatedAt: DateTime.now(),
-        locationUrl: _locationUrlController.text.isNotEmpty
-            ? _locationUrlController.text
-            : _getDefaultLocationForCollege(_selectedCollege!),
-        latitude: _latitude,
-        longitude: _longitude,
+        type: _selectedType!,
+        status: _labStatus,
+        notes: _notesController.text.trim(),
+        locationUrl: widget.lab?.locationUrl,
+        imagePath: finalImagePath,
+        createdAt: widget.lab?.createdAt ?? now,
+        updatedAt: now,
+        deviceIds: widget.lab?.deviceIds ?? [],
       );
 
-      if (widget.lab == null) {
-        await DatabaseService.addLab(lab);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('تم إضافة المعمل بنجاح'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        await DatabaseService.updateLab(lab);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('تم تحديث المعمل بنجاح'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      }
-
-      if (mounted) {
-        Navigator.pop(context);
-      }
-
-      return lab;
+      // حفظ المعمل في قاعدة البيانات وإرجاع الكائن المحفوظ.
+      await FirebaseDatabaseService.addOrUpdateLab(newLab);
+      return newLab;
     } catch (e) {
-      debugPrint('خطأ في حفظ المعمل: $e');
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في حفظ المعمل: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UIHelpers.showSnackBar(
+            context: context,
+            message: 'خطأ في حفظ المعمل: $e',
+            type: SnackBarType.error);
       }
       return null;
     } finally {
@@ -533,179 +213,499 @@ class _AddLabScreenState extends State<AddLabScreen> {
     }
   }
 
-  Future<void> _saveThenAddDevices() async {
-    final lab = await _saveLab();
-    if (lab != null && mounted) {
-      Navigator.push(
+  //------------------------------------------------------------------------------
+
+  /// دالة مرتبطة بزر الحفظ العادي، تحفظ البيانات ثم تعود للشاشة السابقة.
+  Future<void> _saveLabAndPop() async {
+    final newLab = await _performSave();
+    if (newLab != null && mounted) {
+      UIHelpers.showSnackBar(
+          context: context,
+          message: 'تم حفظ المعمل بنجاح',
+          type: SnackBarType.success);
+      Navigator.pop(context, newLab);
+    }
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// دالة مرتبطة بزر "حفظ وإضافة جهاز"، تحفظ المعمل ثم تنتقل مباشرة لشاشة إضافة جهاز.
+  Future<void> _saveLabAndAddDevice() async {
+    final newLab = await _performSave();
+    if (newLab != null && mounted) {
+      UIHelpers.showSnackBar(
+          context: context,
+          message: 'تم حفظ المعمل بنجاح، سيتم نقلك لإضافة جهاز...',
+          type: SnackBarType.success);
+
+      // استبدال الشاشة الحالية بشاشة إضافة جهاز لتجربة مستخدم أفضل.
+      Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => AddDeviceScreen(labId: lab.id),
+          builder: (context) => AddDeviceScreen(labId: newLab.id),
         ),
       );
     }
   }
 
-  Future<void> _pickImageFromCamera() async {
-    try {
-      final picked = await ImagePicker().pickImage(source: ImageSource.camera);
-      if (picked != null) {
-        final File imageFile = File(picked.path);
+  //------------------------------------------------------------------------------
 
-        // Validate image size
-        final bytes = await imageFile.length();
-        const maxSizeInBytes = 5 * 1024 * 1024; // 5 MB
+  /// الدالة الأساسية لبناء واجهة المستخدم (UI) للشاشة بأكملها.
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.lab != null;
 
-        if (bytes > maxSizeInBytes) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('حجم الصورة كبير جدًا. الحد الأقصى 5 ميجابايت'),
-                backgroundColor: Colors.red,
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(isEditing ? 'تعديل معمل' : 'إضافة معمل'),
+          actions: [
+            // عرض أيقونة حذف الصورة فقط إذا كانت هناك صورة.
+            if (_capturedImage != null || _existingImageUrl != null)
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => setState(() {
+                  _capturedImage = null;
+                  _existingImageUrl = null;
+                }),
               ),
-            );
-          }
-          return;
-        }
-
-        setState(() {
-          _capturedImage = imageFile;
-        });
-      }
-    } catch (e) {
-      debugPrint('خطأ في التقاط الصورة: $e');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في التقاط الصورة: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _pickImageFromGallery() async {
-    try {
-      final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-      if (picked != null) {
-        final File imageFile = File(picked.path);
-
-        // Validate image size
-        final bytes = await imageFile.length();
-        const maxSizeInBytes = 5 * 1024 * 1024; // 5 MB
-
-        if (bytes > maxSizeInBytes) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('حجم الصورة كبير جدًا. الحد الأقصى 5 ميجابايت'),
-                backgroundColor: Colors.red,
+          ],
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(_defaultSpacing),
+                  children: [
+                    _LabStatusDropdown(
+                      initialValue: _labStatus,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _labStatus = value;
+                          // إذا تم تغيير الحالة إلى "مفتوح مع أجهزة"، يتم حذف الصورة تلقائيًا.
+                          if (_labStatus == LabStatus.openWithDevices) {
+                            _capturedImage = null;
+                            _existingImageUrl = null;
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _CollegeDropdown(
+                      selectedValue: _selectedCollege,
+                      onChanged: (value) {
+                        if (value == null || value == _selectedCollege) return;
+                        setState(() {
+                          _selectedCollege = value;
+                          _selectedDepartment =
+                              null; // إعادة تعيين القسم عند تغيير الكلية.
+                        });
+                      },
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _DepartmentDropdown(
+                      college: _selectedCollege,
+                      selectedValue: _selectedDepartment,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedDepartment = value);
+                      },
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _CustomTextField(
+                      controller: _labNumberController,
+                      labelText: 'رقم المعمل',
+                      validator: ValidationUtils.validateName,
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _FloorDropdown(
+                      selectedValue: _selectedFloor,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedFloor = value);
+                      },
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _LabTypeDropdown(
+                      selectedValue: _selectedType,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedType = value);
+                      },
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _CustomTextField(
+                      controller: _notesController,
+                      labelText: 'ملاحظات',
+                      maxLines: 3,
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _ImageCaptureSection(
+                      capturedImage: _capturedImage,
+                      existingImageUrl: _existingImageUrl,
+                      onPickImage: _pickImage,
+                    ),
+                    const SizedBox(height: _defaultSpacing),
+                    _ActionButtons(
+                      isEditing: isEditing,
+                      labStatus: _labStatus,
+                      onSave: _saveLabAndPop,
+                      onSaveAndAddDevice: _saveLabAndAddDevice,
+                      onAddDeviceToLab: () {
+                        // الانتقال لشاشة إضافة جهاز لنفس المعمل (في وضع التعديل).
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                AddDeviceScreen(labId: widget.lab!.id),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            );
-          }
-          return;
-        }
-
-        setState(() {
-          _capturedImage = imageFile;
-        });
-      }
-    } catch (e) {
-      debugPrint('خطأ في اختيار الصورة: $e');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في اختيار الصورة: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  void _showImageSourceDialog() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'اختر مصدر الصورة',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _pickImageFromCamera();
-                },
-                icon: const Icon(Icons.camera_alt),
-                label: const Text('التقاط صورة'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _pickImageFromGallery();
-                },
-                icon: const Icon(Icons.photo_library),
-                label: const Text('اختيار من المعرض'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
+}
 
-  String _getDefaultLocationForCollege(String college) {
-    switch (college) {
-      case 'كلية الهندسة':
-        return 'https://maps.app.goo.gl/4PfbWDc36XAdfRnM7';
-      case 'كلية الطب':
-        return 'https://maps.app.goo.gl/mSET1C88At97o6s46';
-      case 'كلية الحاسب الآلي':
-        return 'https://maps.app.goo.gl/yfHBYYpfLaoWu1qd8';
-      case 'كلية العلوم':
-        return 'https://maps.app.goo.gl/iVGvJTV6e1Vquxqt6';
-      case 'كلية الإدارة والاقتصاد':
-        return 'https://maps.app.goo.gl/7ysTpqfdpZPPQTAn8';
-      default:
-        return '';
-    }
+// --- ويدجتات محسّنة ومفصولة لتحسين الأداء ---
+
+/// ويدجت مخصص لحقول النص لتقليل التكرار وتوحيد الشكل.
+class _CustomTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String labelText;
+  final String? Function(String?)? validator;
+  final int maxLines;
+
+  const _CustomTextField({
+    required this.controller,
+    required this.labelText,
+    this.validator,
+    this.maxLines = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      maxLines: maxLines,
+      decoration: InputDecoration(
+        labelText: labelText,
+        alignLabelWithHint: maxLines > 1,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      validator: validator,
+    );
   }
+}
 
-  List<DropdownMenuItem<String>> _buildDepartmentDropdownItems() {
-    if (_selectedCollege == null || _selectedCollege!.isEmpty) {
-      return [];
+//------------------------------------------------------------------------------
+
+/// ويدجت مخصص لقائمة حالة المعمل لعرضها بشكل منظم.
+class _LabStatusDropdown extends StatelessWidget {
+  final LabStatus initialValue;
+  final ValueChanged<LabStatus?> onChanged;
+
+  const _LabStatusDropdown(
+      {required this.initialValue, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<LabStatus>(
+      value: initialValue,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: 'حالة المعمل',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      items: const [
+        DropdownMenuItem(
+          value: LabStatus.openWithDevices,
+          child: Row(children: [
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 8),
+            Text('مفتوح مع أجهزة')
+          ]),
+        ),
+        DropdownMenuItem(
+          value: LabStatus.openNoDevices,
+          child: Row(children: [
+            Icon(Icons.warning, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('يوجد مشكلة')
+          ]),
+        ),
+        DropdownMenuItem(
+          value: LabStatus.closed,
+          child: Row(children: [
+            Icon(Icons.cancel, color: Colors.red),
+            SizedBox(width: 8),
+            Text('مغلق')
+          ]),
+        ),
+      ],
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مخصص لقائمة الكليات.
+class _CollegeDropdown extends StatelessWidget {
+  final String? selectedValue;
+  final ValueChanged<String?> onChanged;
+
+  const _CollegeDropdown({this.selectedValue, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      onChanged: onChanged,
+      validator: (v) => ValidationUtils.validateDropdown(v,
+          errorMessage: 'الرجاء اختيار الكلية'),
+      decoration: InputDecoration(
+        labelText: 'الكلية',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      items: DeviceFormConstants.colleges
+          .map((college) =>
+              DropdownMenuItem(value: college, child: Text(college)))
+          .toList(),
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مخصص لقائمة الأقسام التي تعتمد على الكلية المختارة.
+class _DepartmentDropdown extends StatelessWidget {
+  final String? college;
+  final String? selectedValue;
+  final ValueChanged<String?> onChanged;
+
+  const _DepartmentDropdown({
+    this.college,
+    this.selectedValue,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // جلب قائمة الأقسام بناءً على الكلية المختارة.
+    final departmentList =
+        (college != null ? DeviceFormConstants.departments[college] : null) ??
+            [];
+
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      onChanged: onChanged,
+      validator: (v) => ValidationUtils.validateDropdown(v,
+          errorMessage: 'الرجاء اختيار القسم'),
+      decoration: InputDecoration(
+        labelText: 'القسم',
+        hintText: college == null ? 'الرجاء اختيار الكلية أولاً' : 'اختر القسم',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      items: departmentList.map((String department) {
+        return DropdownMenuItem<String>(
+          value: department,
+          child: Text(department),
+        );
+      }).toList(),
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مخصص لقائمة الأدوار.
+class _FloorDropdown extends StatelessWidget {
+  final String? selectedValue;
+  final ValueChanged<String?> onChanged;
+
+  const _FloorDropdown({this.selectedValue, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      onChanged: onChanged,
+      validator: (v) => ValidationUtils.validateDropdown(v,
+          errorMessage: 'الرجاء اختيار الدور'),
+      decoration: InputDecoration(
+        labelText: 'الدور',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      items: DeviceFormConstants.floors
+          .map((floor) => DropdownMenuItem(value: floor, child: Text(floor)))
+          .toList(),
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مخصص لقائمة أنواع المعامل (أو الأماكن).
+class _LabTypeDropdown extends StatelessWidget {
+  final String? selectedValue;
+  final ValueChanged<String?> onChanged;
+
+  const _LabTypeDropdown({this.selectedValue, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      onChanged: onChanged,
+      validator: (v) => ValidationUtils.validateDropdown(v,
+          errorMessage: 'الرجاء اختيار نوع المكان'),
+      decoration: InputDecoration(
+        labelText: 'نوع المكان',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      items: DeviceFormConstants.labTypes
+          .map((type) => DropdownMenuItem(value: type, child: Text(type)))
+          .toList(),
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مسؤول عن عرض الصورة الملتقطة أو الموجودة وزر التقاط الصورة.
+class _ImageCaptureSection extends StatelessWidget {
+  final File? capturedImage;
+  final String? existingImageUrl;
+  final VoidCallback onPickImage;
+
+  const _ImageCaptureSection({
+    this.capturedImage,
+    this.existingImageUrl,
+    required this.onPickImage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    ImageProvider? imageProvider;
+    // تحديد مصدر الصورة (ملف محلي أو رابط من الإنترنت).
+    if (capturedImage != null) {
+      imageProvider = FileImage(capturedImage!);
+    } else if (existingImageUrl != null &&
+        existingImageUrl!.startsWith('http')) {
+      imageProvider = NetworkImage(existingImageUrl!);
     }
 
-    final departments = _departments[_selectedCollege!] ?? [];
+    final hasImage = imageProvider != null;
 
-    return departments.map((department) {
-      return DropdownMenuItem(
-        value: department,
-        child: Text(department),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasImage)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image(
+              image: imageProvider,
+              height: 200,
+              width: double.infinity,
+              fit: BoxFit.cover,
+            ),
+          ),
+        const SizedBox(height: 8),
+        ElevatedButton.icon(
+          onPressed: onPickImage,
+          icon: const Icon(Icons.camera_alt),
+          label: Text(hasImage ? 'تغيير الصورة' : 'التقاط صورة'),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 50),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// ويدجت مسؤول عن عرض الأزرار السفلية بناءً على سياق الشاشة (إضافة أو تعديل).
+class _ActionButtons extends StatelessWidget {
+  final bool isEditing;
+  final LabStatus labStatus;
+  final VoidCallback onSave;
+  final VoidCallback onSaveAndAddDevice;
+  final VoidCallback onAddDeviceToLab;
+
+  const _ActionButtons({
+    required this.isEditing,
+    required this.labStatus,
+    required this.onSave,
+    required this.onSaveAndAddDevice,
+    required this.onAddDeviceToLab,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // إذا كانت الشاشة في وضع التعديل.
+    if (isEditing) {
+      return Row(
+        children: [
+          Expanded(
+            child: ElevatedButton(
+              onPressed: onSave,
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50)),
+              child: const Text('حفظ التغييرات'),
+            ),
+          ),
+          // عرض زر "إضافة جهاز" فقط إذا لم يكن المعمل مغلقًا.
+          if (labStatus != LabStatus.closed) ...[
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: onAddDeviceToLab,
+                icon: const Icon(Icons.add_to_queue),
+                label: const Text('إضافة جهاز'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                  backgroundColor: theme.colorScheme.secondary,
+                  foregroundColor: theme.colorScheme.onSecondary,
+                ),
+              ),
+            ),
+          ],
+        ],
       );
-    }).toList();
+    } else {
+      // إذا كانت الشاشة في وضع الإضافة.
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ElevatedButton(
+            onPressed: onSave,
+            style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50)),
+            child: const Text('إضافة المعمل'),
+          ),
+          // عرض زر "إضافة معمل مع جهاز" فقط إذا لم يكن المعمل مغلقًا.
+          if (labStatus != LabStatus.closed) ...[
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: onSaveAndAddDevice,
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50)),
+              child: const Text('إضافة معمل مع الجهاز'),
+            ),
+          ],
+        ],
+      );
+    }
   }
 }

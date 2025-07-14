@@ -1,487 +1,322 @@
 import 'package:flutter/material.dart';
-import '../models/device_model.dart';
-import '../models/lab_model.dart';
-import '../services/barcode_service.dart';
-import '../services/database_service.dart';
-import 'add_device_screen.dart';
-import 'package:uuid/uuid.dart';
-import 'device_details_screen.dart';
+import 'package:mobile_scanner/mobile_scanner.dart'; // مكتبة لمسح الباركود باستخدام الكاميرا.
+import 'package:uuid/uuid.dart'; // لتوليد معرفات فريدة (IDs).
+import 'dart:developer'
+    as developer; // لتسجيل الأخطاء والرسائل التشخيصية المتقدمة.
 
+import '../models/device_model.dart'; // نموذج بيانات الجهاز.
+import '../models/lab_model.dart'; // نموذج بيانات المعمل.
+import 'package:uquts1/services/firebase_database_service.dart';
+import '../screens/view_device_screen.dart'; // الشاشة الجديدة لعرض الجهاز فقط.
+import '../screens/add_device_screen.dart'; // شاشة إضافة/تعديل جهاز.
+import '../utils/ui_helpers.dart'; // دوال مساعدة لعرض عناصر واجهة المستخدم.
+import '../utils/barcode_utils.dart'; // دوال مساعدة لتحليل بيانات الباركود.
+import '../utils/validation_utils.dart'; // دوال التحقق من صحة المدخلات.
+import '../utils/device_form_constants.dart'; // ثوابت وقوائم مستخدمة في الفورم.
+
+//------------------------------------------------------------------------------
+
+// ويدجت شاشة ماسح الباركود، وهي StatefulWidget لأن حالتها تتغير.
 class BarcodeScannerScreen extends StatefulWidget {
-  final bool isDeviceMode;
-
-  const BarcodeScannerScreen({
-    super.key,
-    this.isDeviceMode = false,
-  });
+  const BarcodeScannerScreen({super.key});
 
   @override
-  State<BarcodeScannerScreen> createState() => _BarcodeScannerScreenState();
+  BarcodeScannerScreenState createState() => BarcodeScannerScreenState();
 }
 
-class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
-  // Use final for fields that don't change after initialization
-  final List<LabModel> _labs = [];
-  DeviceModel? _existingDevice;
+//------------------------------------------------------------------------------
 
+// كلاس الحالة (State) الخاص بـ BarcodeScannerScreen.
+class BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
+  // متحكم (Controller) للتحكم في ماسح الباركود (الكاميرا).
+  // تم تعطيل التشغيل التلقائي (autoStart: false) للتحكم الكامل في بدء وإيقاف الماسح.
+  final MobileScannerController _scannerController = MobileScannerController(
+    detectionSpeed: DetectionSpeed.normal, // سرعة اكتشاف الباركود.
+    facing: CameraFacing.back, // استخدام الكاميرا الخلفية افتراضيًا.
+    autoStart: false, // <--- مهم جداً: تعطيل التشغيل التلقائي
+  );
+
+  //------------------------------------------------------------------------------
+
+  // متغيرات الحالة (State)
+  List<LabModel> _availableLabs = []; // قائمة لتخزين المعامل المتاحة.
+  bool _isLoading = false; // لتتبع حالة تحميل المعامل.
+
+  //------------------------------------------------------------------------------
+
+  /// دالة تُستدعى مرة واحدة عند بناء الويدجت لأول مرة.
   @override
   void initState() {
     super.initState();
-    _loadLabs();
+    _loadLabs(); // تحميل قائمة المعامل عند بدء الشاشة.
+    _startScanner(); // بدء الماسح الضوئي يدوياً بشكل صريح.
+    developer.log(
+        'BarcodeScannerScreen: Scanner initialized and explicitly starting in initState.');
   }
 
-  Future<void> _loadLabs() async {
-    try {
-      final labs = await DatabaseService.getLabs();
-      if (mounted) {
-        setState(() {
-          _labs.clear();
-          _labs.addAll(labs);
-        });
+  //------------------------------------------------------------------------------
+
+  /// دالة لبدء الماسح الضوئي (الكاميرا) بشكل آمن.
+  void _startScanner() {
+    Future.microtask(() async {
+      if (!mounted) {
+        developer.log(
+            'BarcodeScannerScreen: _startScanner called but widget is not mounted.');
+        return;
       }
-    } catch (e) {
-      // Simple error logging and user feedback
-      debugPrint('Error loading labs: $e');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في تحميل المعامل: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  // دالة لعرض حوار تسجيل جهاز جديد بتصميم أكثر جاذبية
-  void _showNewDeviceDialog(Map<String, String?> barcodeData) {
-    final theme = Theme.of(context);
-
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // رأس الحوار
-              Row(
-                children: [
-                  Icon(
-                    Icons.add_circle_outline,
-                    color: theme.colorScheme.primary,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      'تسجيل جهاز جديد',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // محتوى الحوار
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withAlpha(50),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'تم اكتشاف جهاز غير مسجل في النظام',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildDetailRow(theme, Icons.business_outlined,
-                        'مصدر الأصل', barcodeData['assetSource'] ?? 'غير محدد'),
-                    _buildDetailRow(theme, Icons.category_outlined, 'فئة الأصل',
-                        barcodeData['assetCategory'] ?? 'غير محدد'),
-                    _buildDetailRow(theme, Icons.qr_code_outlined, 'رمز الأصل',
-                        barcodeData['assetCode'] ?? 'غير محدد'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // أزرار الإجراءات
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: theme.colorScheme.error,
-                        side: BorderSide(color: theme.colorScheme.error),
-                      ),
-                      child: const Text('إلغاء'),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showLabSelectionDialog(barcodeData);
-                      },
-                      child: const Text('تسجيل الجهاز'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // دالة مساعدة لبناء صف تفاصيل
-  Widget _buildDetailRow(
-      ThemeData theme, IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            color: theme.colorScheme.primary.withAlpha(180),
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '$label: ',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          Text(
-            value,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // تعديل دالة _scanBarcode للاستخدام الجديد
-  Future<void> _scanBarcode() async {
-    try {
-      final barcode = await BarcodeService.scanBarcode(context);
-      if (barcode == null || !mounted) return;
-
-      // تحليل الباركود مع طباعة معلومات التصحيح
-      final barcodeData = BarcodeService.parseUniversityBarcode(barcode);
-      final assetCode = barcodeData['assetCode'];
-
-      // طباعة معلومات التصحيح
-      debugPrint('Scanned Barcode: $barcode');
-      debugPrint('Parsed Asset Code: $assetCode');
-      debugPrint('Parsed Asset Source: ${barcodeData['assetSource']}');
-      debugPrint('Parsed Asset Category: ${barcodeData['assetCategory']}');
-
-      // Check if this device is already registered
-      final devices = await DatabaseService.getDevices();
-
-      // Find the device with matching barcode (مع التعامل مع الحالات المختلفة)
-      final existingDevice = devices.where((d) {
-        // التحقق من رمز الأصل مع طباعة معلومات التصحيح
-        bool matchAssetCode = d.assetCode != null &&
-            (d.assetCode == assetCode ||
-                d.assetCode == barcode ||
-                (assetCode != null && barcode.contains(d.assetCode!)) ||
-                (d.assetCode != null && barcode.contains(d.assetCode!)));
-
-        // التحقق من الباركود الجامعي مع طباعة معلومات التصحيح
-        bool matchUniversityBarcode = d.universityBarcode != null &&
-            (d.universityBarcode == barcode ||
-                barcode.contains(d.universityBarcode!) ||
-                d.universityBarcode!.contains(barcode));
-
-        // طباعة معلومات التصحيح للجهاز الحالي
-        if (matchAssetCode || matchUniversityBarcode) {
-          debugPrint('Matched Device:');
-          debugPrint('Device ID: ${d.id}');
-          debugPrint('Device Asset Code: ${d.assetCode}');
-          debugPrint('Device University Barcode: ${d.universityBarcode}');
-        }
-
-        return matchAssetCode || matchUniversityBarcode;
-      }).toList();
-
-      // التحقق من وجود أجهزة مطابقة
-      if (existingDevice.isNotEmpty) {
-        debugPrint('Found ${existingDevice.length} matching devices');
-
+      try {
+        await _scannerController.start();
+        developer.log('BarcodeScannerScreen: Scanner started successfully.');
+      } catch (e) {
+        developer.log('BarcodeScannerScreen: Error starting scanner: $e');
         if (mounted) {
-          setState(() => _existingDevice = existingDevice.first);
-          _showExistingDeviceDialog(_existingDevice!);
+          UIHelpers.showErrorSnackBar(context, 'خطأ في بدء الماسح الضوئي: $e');
         }
-      } else {
-        // Device not found, show new device registration dialog
-        debugPrint('No matching device found');
-
-        if (!mounted) return;
-
-        // استخدام الحوار الجديد
-        _showNewDeviceDialog(barcodeData);
       }
-    } catch (e) {
-      // Simple error logging and user feedback
-      debugPrint('Error scanning barcode: $e');
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'حدث خطأ في قراءة الباركود: $e',
-            style: const TextStyle(color: Colors.white),
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    });
   }
 
-  void _showExistingDeviceDialog(DeviceModel device) {
-    // التأكد من وجود السياق والشاشة
-    if (!mounted) return;
+  //------------------------------------------------------------------------------
 
-    // طباعة معلومات الجهاز للتأكد
-    debugPrint('Opening Device Details:');
-    debugPrint('Device ID: ${device.id}');
-    debugPrint('Device Name: ${device.name}');
-    debugPrint('Device Asset Code: ${device.assetCode}');
-    debugPrint('Device University Barcode: ${device.universityBarcode}');
+  /// دالة لإيقاف الماسح الضوئي (الكاميرا) بشكل آمن.
+  void _stopScanner() {
+    Future.microtask(() async {
+      if (!mounted) {
+        developer.log(
+            'BarcodeScannerScreen: _stopScanner called but widget is not mounted.');
+        return;
+      }
+      try {
+        await _scannerController.stop();
+        developer.log('BarcodeScannerScreen: Scanner stopped successfully.');
+      } catch (e) {
+        developer.log('BarcodeScannerScreen: Error stopping scanner: $e');
+        if (mounted) {
+          UIHelpers.showErrorSnackBar(
+              context, 'خطأ في إيقاف الماسح الضوئي: $e');
+        }
+      }
+    });
+  }
 
-    // محاولة فتح صفحة تفاصيل الجهاز مع معالجة الأخطاء
+  //------------------------------------------------------------------------------
+
+  /// دالة تُستدعى عند إزالة الويدجت، لتحرير الموارد ومنع تسرب الذاكرة.
+  @override
+  void dispose() {
+    _stopScanner(); // التأكد من إيقاف الماسح عند إغلاق الشاشة.
+    _scannerController.dispose(); // التخلص من متحكم الكاميرا.
+    developer.log('BarcodeScannerScreen: Scanner disposed in dispose.');
+    super.dispose();
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// دالة غير متزامنة لتحميل قائمة المعامل من قاعدة البيانات.
+  /// هذه القائمة ضرورية في حالة تسجيل جهاز جديد لتحديد معمله.
+  Future<void> _loadLabs() async {
+    setState(() => _isLoading = true);
     try {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DeviceDetailsScreen(device: device),
-        ),
-      );
+      final labs = await FirebaseDatabaseService.getLabs();
+      setState(() {
+        _availableLabs = labs;
+        _isLoading = false;
+      });
+      developer.log(
+          'BarcodeScannerScreen: Labs loaded successfully. Count: ${labs.length}');
     } catch (e) {
-      // طباعة أي خطأ محتمل
-      debugPrint('Error opening device details: $e');
+      developer.log('Error loading labs',
+          name: 'BarcodeScannerScreen',
+          level: 1000, // مستوى الخطورة (SEVERE).
+          error: e,
+          stackTrace: StackTrace.current);
 
-      // عرض رسالة خطأ للمستخدم
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('حدث خطأ في فتح تفاصيل الجهاز: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        UIHelpers.showSnackBar(
+          context: context,
+          message: 'خطأ في تحميل المعامل: ${e.toString()}',
+          type: SnackBarType.error,
+        );
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  // دالة اختيار المعمل وإضافة الجهاز الجديد
-  void _showLabSelectionDialog(Map<String, String?> barcodeData) {
-    // التحقق من وجود معامل
-    if (_labs.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('لا توجد معامل مسجلة. يرجى إضافة معمل أولاً'),
-          backgroundColor: Colors.red,
-        ),
-      );
+  //------------------------------------------------------------------------------
+
+  /// دالة لمعالجة الباركود بعد اكتشافه بواسطة الكاميرا.
+  Future<void> _handleBarcodeScan(BarcodeCapture capture) async {
+    if (capture.barcodes.isEmpty) {
+      developer.log('BarcodeScannerScreen: No barcode detected.');
       return;
     }
 
-    final theme = Theme.of(context);
+    _stopScanner(); // إيقاف الماسح مؤقتاً لمنع المسح المتكرر.
+    developer
+        .log('BarcodeScannerScreen: Scanner stopped due to barcode detection.');
 
+    final barcode = capture.barcodes.first;
+    developer
+        .log('BarcodeScannerScreen: Barcode detected: ${barcode.rawValue}');
+
+    // تحليل بيانات الباركود باستخدام دالة مساعدة.
+    final barcodeData = BarcodeUtils.parseUniversityBarcode(barcode);
+
+    // التحقق مما إذا كان الجهاز موجوداً بالفعل في قاعدة البيانات.
+    final existingDevice = await _checkDeviceExists(barcodeData);
+
+    if (existingDevice != null) {
+      // إذا كان الجهاز موجوداً، يتم عرض نافذة حوارية.
+      _showExistingDeviceDialog(existingDevice);
+    } else {
+      // إذا لم يكن موجوداً، يتم الانتقال لشاشة تسجيل جهاز جديد.
+      _navigateToNewDeviceRegistration(barcodeData);
+    }
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// دالة للتحقق من وجود الجهاز في قاعدة البيانات بناءً على بيانات الباركود.
+  Future<DeviceModel?> _checkDeviceExists(
+      Map<String, String?> barcodeData) async {
+    try {
+      developer.log(
+          'BarcodeScannerScreen: Checking if device exists for barcode/assetCode: ${barcodeData['barcode'] ?? ''} / ${barcodeData['assetCode'] ?? ''}');
+      final device = await FirebaseDatabaseService.getDeviceByBarcode(
+        barcodeData['barcode'] ?? '',
+        barcodeData['assetCode'] ?? '',
+      );
+      if (device != null) {
+        developer.log('BarcodeScannerScreen: Device found: ${device.name}');
+      } else {
+        developer.log('BarcodeScannerScreen: Device not found.');
+      }
+      return device;
+    } catch (e) {
+      developer.log('Error checking device existence',
+          name: 'BarcodeScannerScreen',
+          level: 1000,
+          error: e,
+          stackTrace: StackTrace.current);
+      return null;
+    }
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// دالة لعرض نافذة منبثقة للمستخدم تخبره بأن الجهاز موجود بالفعل.
+  void _showExistingDeviceDialog(DeviceModel device) {
+    developer.log(
+        'BarcodeScannerScreen: Showing existing device dialog for ${device.name}.');
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
+      barrierDismissible: false, // لا يمكن إغلاقه بالنقر خارجاً.
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('جهاز موجود بالفعل'),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // رأس الحوار
-              Row(
-                children: [
-                  Icon(
-                    Icons.science_outlined,
-                    color: theme.colorScheme.primary,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      'اختيار المعمل',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
+              Text('تم العثور على الجهاز: ${device.name}',
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  developer.log(
+                      'BarcodeScannerScreen: "View Device Details" button pressed for existing device.');
+                  Navigator.pop(context); // إغلاق AlertDialog
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ViewDeviceScreen(device: device),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // قائمة المعامل
-              Expanded(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _labs.length,
-                  itemBuilder: (context, index) {
-                    final lab = _labs[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        title: Text('معمل ${lab.labNumber}'),
-                        subtitle: Text('${lab.college} - ${lab.department}'),
-                        trailing: Text(lab.floorNumber),
-                        onTap: () async {
-                          // إنشاء جهاز جديد
-                          final newDevice = DeviceModel(
-                            id: const Uuid().v4(),
-                            name: '', // سيتم ملؤه لاحقاً في شاشة الإضافة
-                            college: lab.college, // من المعمل المختار
-                            department: lab.department, // من المعمل المختار
-                            model: '', // سيتم ملؤه لاحقاً
-                            serialNumber: '', // سيتم ملؤه لاحقاً
-                            processor: '', // سيتم ملؤه لاحقاً
-                            storageType: '', // سيتم ملؤه لاحقاً
-                            storageSize: '', // سيتم ملؤه لاحقاً
-                            hasExtraStorage: false, // قيمة افتراضية
-                            osVersion: '', // سيتم ملؤه لاحقاً
-                            notes: '', // سيتم ملؤه لاحقاً
-                            labId: lab.id,
-                            universityBarcode: barcodeData['assetCode'],
-                            assetSource: barcodeData['assetSource'],
-                            assetCategory: barcodeData['assetCategory'],
-                            assetCode: barcodeData['assetCode'],
-                            needsMaintenance: false, // قيمة افتراضية
-                            createdAt: DateTime.now(),
-                            updatedAt: DateTime.now(),
-                          );
-
-                          try {
-                            // حفظ الجهاز في قاعدة البيانات
-                            await DatabaseService.addDevice(newDevice);
-
-                            // إغلاق الحوار
-                            if (mounted) Navigator.pop(context);
-
-                            // عرض رسالة نجاح
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      'تم إضافة الجهاز بنجاح في معمل ${lab.labNumber}'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            }
-
-                            // الانتقال إلى تفاصيل الجهاز
-                            if (mounted) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      DeviceDetailsScreen(device: newDevice),
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            // عرض رسالة خطأ
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('خطأ في إضافة الجهاز: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          }
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-              // زر الإلغاء
-              const SizedBox(height: 16),
-              OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء'),
+                  ).then((_) {
+                    // بعد العودة من شاشة عرض التفاصيل، يتم إعادة تشغيل الماسح.
+                    developer.log(
+                        'BarcodeScannerScreen: Returned from ViewDeviceScreen, restarting scanner.');
+                    _startScanner();
+                  });
+                },
+                child: const Text('عرض تفاصيل الجهاز'),
               ),
             ],
           ),
-        ),
-      ),
-    );
+        );
+      },
+    ).then((_) {
+      // هذا الجزء يتم استدعاؤه أيضاً إذا تم إغلاق الحوار بطريقة أخرى (مثل زر الرجوع).
+      developer.log(
+          'BarcodeScannerScreen: Existing device dialog dismissed (external dismissal or pop), restarting scanner.');
+      _startScanner(); // إعادة تشغيل الماسح الضوئي.
+    });
   }
 
+  //------------------------------------------------------------------------------
+
+  /// دالة للانتقال إلى شاشة تسجيل جهاز جديد، مع تمرير بيانات الباركود.
+  void _navigateToNewDeviceRegistration(Map<String, String?> barcodeData) {
+    developer.log(
+        'BarcodeScannerScreen: Navigating to AddDeviceScreen for new device registration.');
+    if (_availableLabs.isEmpty) {
+      UIHelpers.showSnackBar(
+        context: context,
+        message: 'لا توجد معامل متاحة للتسجيل',
+        type: SnackBarType.error,
+      );
+      _startScanner(); // أعد تشغيل الماسح الضوئي إذا لم تكن هناك معامل.
+      developer
+          .log('BarcodeScannerScreen: No labs available, restarting scanner.');
+      return;
+    }
+
+    // الانتقال لشاشة إضافة جهاز وتمرير بيانات الباركود لملء الحقول تلقائياً.
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddDeviceScreen(scannedBarcodeData: barcodeData),
+      ),
+    ).then((_) {
+      // عند العودة من شاشة إضافة الجهاز، أعد تشغيل الماسح الضوئي.
+      developer.log(
+          'BarcodeScannerScreen: Returned from AddDeviceScreen (new device), restarting scanner.');
+      _startScanner();
+    });
+  }
+
+  //------------------------------------------------------------------------------
+
+  /// الدالة الأساسية لبناء واجهة المستخدم (UI) للشاشة بأكملها.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('مسح الباركود'),
-        backgroundColor: theme.colorScheme.primary,
-        foregroundColor: theme.colorScheme.onPrimary,
+        actions: [
+          // زر للتحكم في فلاش الكاميرا.
+          IconButton(
+            icon: const Icon(Icons.flash_on, color: Colors.grey),
+            onPressed: () {
+              _scannerController.toggleTorch();
+              developer.log('BarcodeScannerScreen: Torch toggled.');
+            },
+          ),
+          // زر للتبديل بين الكاميرا الأمامية والخلفية.
+          IconButton(
+            icon: const Icon(Icons.camera_rear),
+            onPressed: () {
+              _scannerController.switchCamera();
+              developer.log('BarcodeScannerScreen: Camera switched.');
+            },
+          ),
+        ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.qr_code_scanner_outlined,
-              size: 120,
-              color: theme.colorScheme.primary.withAlpha(128),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : MobileScanner(
+              controller: _scannerController,
+              onDetect: _handleBarcodeScan,
             ),
-            const SizedBox(height: 24),
-            Text(
-              'مسح باركود الجامعة',
-              style: theme.textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'قم بمسح الباركود الموجود على الجهاز\nللتحقق من تسجيله أو إضافته',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: theme.colorScheme.onSurface.withAlpha(179),
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            FilledButton.icon(
-              onPressed: _scanBarcode,
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('مسح الباركود'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

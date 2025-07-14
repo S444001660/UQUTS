@@ -1,14 +1,20 @@
-import 'dart:io';
+import 'dart:io'; // للتعامل مع الملفات، مثل التحقق من وجود صورة المعمل.
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher.dart'; // مكتبة لفتح الروابط الخارجية مثل روابط خرائط جوجل.
 
-import '../models/device_model.dart';
-import '../models/lab_model.dart';
-import '../services/database_service.dart';
-import 'add_device_screen.dart';
-import 'add_lab_screen.dart';
+import '../models/device_model.dart'; // نموذج بيانات الجهاز.
+import '../models/lab_model.dart'; // نموذج بيانات المعمل.
+import 'package:uquts1/services/firebase_database_service.dart';
+import 'add_device_screen.dart'; // شاشة إضافة/تعديل جهاز.
+import 'add_lab_screen.dart'; // شاشة إضافة/تعديل معمل.
+import '../utils/ui_helpers.dart'; // دوال مساعدة لعرض عناصر واجهة المستخدم.
+import 'view_device_screen.dart'; // شاشة عرض الجهاز فقط. <-- تم التأكيد على الاستيراد
 
+//------------------------------------------------------------------------------
+
+/// ويدجت شاشة تفاصيل المعمل، وهي StatefulWidget لإدارة الحالات الداخلية.
 class LabDetailsScreen extends StatefulWidget {
+  /// متغير لتخزين بيانات المعمل الذي سيتم عرضه.
   final LabModel lab;
 
   const LabDetailsScreen({
@@ -20,12 +26,18 @@ class LabDetailsScreen extends StatefulWidget {
   State<LabDetailsScreen> createState() => _LabDetailsScreenState();
 }
 
-class _LabDetailsScreenState extends State<LabDetailsScreen> {
-  late LabModel _currentLab;
-  bool _isLoading = true;
-  List<DeviceModel> _devices = [];
+//------------------------------------------------------------------------------
 
-  // خرائط الكليات الافتراضية
+/// كلاس الحالة (State) الخاص بـ LabDetailsScreen.
+class _LabDetailsScreenState extends State<LabDetailsScreen> {
+  // --- متغيرات الحالة (State Variables) ---
+  late LabModel _currentLab; // لتخزين بيانات المعمل الحالية، ويمكن تحديثها.
+  bool _isLoading = true; // لتتبع حالة تحميل قائمة الأجهزة.
+  List<DeviceModel> _devices = []; // قائمة لتخزين الأجهزة الموجودة في المعمل.
+
+  //------------------------------------------------------------------------------
+
+  // خريطة لتوفير مواقع افتراضية للكليات في حال لم يكن للمعمل موقع محدد.
   final Map<String, String> _collegeLocations = {
     'كلية الهندسة': 'https://maps.app.goo.gl/4PfbWDc36XAdfRnM7',
     'كلية الطب': 'https://maps.app.goo.gl/mSET1C88At97o6s46',
@@ -34,24 +46,29 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
     'كلية الإدارة والاقتصاد': 'https://maps.app.goo.gl/7ysTpqfdpZPPQTAn8',
   };
 
+  //------------------------------------------------------------------------------
+
+  /// دالة initState: يتم استدعاؤها مرة واحدة عند إنشاء الويدجت.
   @override
   void initState() {
     super.initState();
-    // Initialize with the passed lab
+    // تهيئة متغير الحالة بالبيانات الممررة من الويدجت.
     _currentLab = widget.lab;
-    _loadLabDetails();
-    _loadDevices();
+    _loadLabDetails(); // تحميل أحدث تفاصيل المعمل.
+    _loadDevices(); // تحميل الأجهزة المرتبطة بالمعمل.
   }
 
-  // دالة جديدة لتحميل تفاصيل المعمل
+  //------------------------------------------------------------------------------
+
+  /// دالة لجلب أحدث تفاصيل المعمل من قاعدة البيانات.
+  /// هذا يضمن أن البيانات المعروضة محدثة دائمًا.
   Future<void> _loadLabDetails() async {
     try {
-      // محاولة جلب أحدث بيانات المعمل من قاعدة البيانات
-      final updatedLab = await DatabaseService.getLabById(_currentLab.id);
-
+      final updatedLab =
+          await FirebaseDatabaseService.getLabById(_currentLab.id);
       if (updatedLab != null && mounted) {
         setState(() {
-          _currentLab = updatedLab;
+          _currentLab = updatedLab; // تحديث الحالة بالبيانات الجديدة.
         });
       }
     } catch (e) {
@@ -59,14 +76,15 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
     }
   }
 
+  //------------------------------------------------------------------------------
+
+  /// دالة غير متزامنة لتحميل قائمة الأجهزة الخاصة بالمعمل.
   Future<void> _loadDevices() async {
     try {
-      if (mounted) {
-        setState(() => _isLoading = true);
-      }
-      final devices = await DatabaseService.getDevices();
+      if (mounted) setState(() => _isLoading = true);
+      // استخدام دالة getDevicesForLab لجلب الأجهزة المرتبطة بالمعمل مباشرة.
       final labDevices =
-          devices.where((d) => d.labId == _currentLab.id).toList();
+          await FirebaseDatabaseService.getDevicesForLab(_currentLab.id);
 
       if (mounted) {
         setState(() {
@@ -76,39 +94,33 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('خطأ في تحميل الأجهزة: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        setState(() => _isLoading = false);
+        UIHelpers.showErrorSnackBar(context, 'خطأ في تحميل الأجهزة: $e');
       }
     }
   }
 
-  // دالة فتح الموقع في Google Maps
+  //------------------------------------------------------------------------------
+
+  /// دالة لفتح موقع المعمل في خرائط جوجل.
   Future<void> _openLocationInMaps() async {
-    // استخدام رابط الموقع المحدد أو الرابط الافتراضي للكلية
+    // استخدام رابط الموقع المخصص للمعمل، أو الرابط الافتراضي للكلية كخيار بديل.
     final locationUrl = _currentLab.locationUrl ??
         _collegeLocations[_currentLab.college] ??
         'https://maps.app.goo.gl/4PfbWDc36XAdfRnM7';
 
     final Uri url = Uri.parse(locationUrl);
+    // محاولة فتح الرابط في تطبيق خارجي (خرائط جوجل).
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر فتح الموقع'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        UIHelpers.showErrorSnackBar(context, 'تعذر فتح الموقع');
       }
     }
   }
 
+  //------------------------------------------------------------------------------
+
+  /// دالة بناء الواجهة الرئيسية للشاشة.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -119,6 +131,7 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
         actions: [
+          // زر "تعديل" للانتقال إلى شاشة تعديل المعمل.
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () {
@@ -127,8 +140,8 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                 MaterialPageRoute(
                   builder: (context) => AddLabScreen(lab: _currentLab),
                 ),
+                // استخدام .then() لتحديث البيانات تلقائيًا بعد العودة من شاشة التعديل.
               ).then((_) {
-                // تحديث تفاصيل المعمل والأجهزة بعد التعديل
                 _loadLabDetails();
                 _loadDevices();
               });
@@ -142,22 +155,16 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // صورة المعمل
+              // عرض صورة المعمل إن وجدت.
               if (_currentLab.imagePath != null &&
-                  File(_currentLab.imagePath!).existsSync())
+                  // التحقق إذا كان المسار يبدأ بـ 'http' (يعني أنه URL)
+                  _currentLab.imagePath!.startsWith('http'))
                 GestureDetector(
                   onTap: () {
-                    showDialog(
+                    // عرض الصورة في نافذة منبثقة عند الضغط عليها.
+                    UIHelpers.showImageDialog(
                       context: context,
-                      builder: (context) => Dialog(
-                        child: InteractiveViewer(
-                          maxScale: 5.0,
-                          child: Image.file(
-                            File(_currentLab.imagePath!),
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                      ),
+                      imageUrl: _currentLab.imagePath!, // تمرير URL الصورة
                     );
                   },
                   child: Container(
@@ -168,115 +175,112 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.file(
-                        File(_currentLab.imagePath!),
+                      child: Image.network(
+                        // استخدام Image.network لـ URL
+                        _currentLab.imagePath!,
                         fit: BoxFit.cover,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                      loadingProgress.expectedTotalBytes!
+                                  : null,
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Icon(Icons.broken_image,
+                                size: 50, color: theme.colorScheme.error),
+                          );
+                        },
                       ),
                     ),
                   ),
                 )
               else
+                // عرض عنصر نائب في حال عدم وجود صورة أو كانت مسارًا محليًا غير صالح.
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.image_not_supported,
-                          color: theme.colorScheme.primary,
-                        ),
+                        Icon(Icons.image_not_supported,
+                            color: theme.colorScheme.primary),
                         const SizedBox(width: 16),
-                        Text(
-                          'لم يتم إضافة صورة للمعمل',
-                          style: theme.textTheme.bodyLarge,
-                        ),
+                        Text('لم يتم إضافة صورة للمعمل',
+                            style: theme.textTheme.bodyLarge),
                       ],
                     ),
                   ),
                 ),
-
               const SizedBox(height: 16),
 
-              // معلومات المعمل
+              // بطاقة معلومات المعمل.
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'معلومات المعمل',
-                        style: theme.textTheme.titleLarge,
-                      ),
+                      Text('معلومات المعمل', style: theme.textTheme.titleLarge),
                       const SizedBox(height: 16),
+                      // بناء صفوف التفاصيل باستخدام دالة مساعدة.
                       _buildDetailRow(
-                        icon: Icons.numbers,
-                        label: 'رقم المعمل',
-                        value: _currentLab.labNumber,
-                      ),
+                          icon: Icons.numbers,
+                          label: 'رقم المعمل',
+                          value: _currentLab.labNumber),
                       const SizedBox(height: 8),
                       _buildDetailRow(
-                        icon: Icons.school_outlined,
-                        label: 'الكلية',
-                        value: _currentLab.college,
-                      ),
+                          icon: Icons.school_outlined,
+                          label: 'الكلية',
+                          value: _currentLab.college),
                       const SizedBox(height: 8),
                       _buildDetailRow(
-                        icon: Icons.account_tree_outlined,
-                        label: 'القسم',
-                        value: _currentLab.department,
-                      ),
+                          icon: Icons.account_tree_outlined,
+                          label: 'القسم',
+                          value: _currentLab.department),
                       const SizedBox(height: 8),
                       _buildDetailRow(
-                        icon: Icons.layers_outlined,
-                        label: 'الدور',
-                        value: _currentLab.floorNumber,
-                      ),
+                          icon: Icons.layers_outlined,
+                          label: 'الدور',
+                          value: _currentLab.floorNumber),
                       const SizedBox(height: 8),
+                      // تغيير الأيقونة واللون بناءً على حالة المعمل.
                       _buildDetailRow(
-                        icon: _currentLab.status == LabStatus.openWithDevices
-                            ? Icons.check_circle
-                            : _currentLab.status == LabStatus.openNoDevices
-                                ? Icons.warning
-                                : Icons.cancel,
+                        icon: _currentLab
+                            .status.icon, // استخدام getter من النموذج
                         label: 'الحالة',
-                        value: _currentLab.status == LabStatus.openWithDevices
-                            ? 'مفتوح مع أجهزة'
-                            : _currentLab.status == LabStatus.openNoDevices
-                                ? 'يوجد مشكلة'
-                                : 'مغلق',
-                        color: _currentLab.status == LabStatus.openWithDevices
-                            ? Colors.green
-                            : _currentLab.status == LabStatus.openNoDevices
-                                ? Colors.orange
-                                : Colors.red,
+                        value: _currentLab
+                            .status.displayName, // استخدام getter من النموذج
+                        color: _currentLab
+                            .status.color, // استخدام getter من النموذج
                       ),
                       const SizedBox(height: 8),
-                      // إضافة الملاحظات
+                      // عرض الملاحظات فقط إذا كانت موجودة.
                       if (_currentLab.notes.isNotEmpty)
                         _buildDetailRow(
-                          icon: Icons.notes_outlined,
-                          label: 'ملاحظات',
-                          value: _currentLab.notes,
-                        ),
+                            icon: Icons.notes_outlined,
+                            label: 'ملاحظات',
+                            value: _currentLab.notes),
                       const SizedBox(height: 8),
-                      // زر خرائط جوجل
+                      // زر فتح الموقع في خرائط جوجل.
                       ElevatedButton.icon(
                         onPressed: _openLocationInMaps,
                         icon: const Icon(Icons.map_outlined),
                         label: const Text('فتح الموقع في Google Maps'),
                         style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 50),
-                        ),
+                            minimumSize: const Size(double.infinity, 50)),
                       ),
                     ],
                   ),
                 ),
               ),
-
               const SizedBox(height: 16),
 
-              // الأجهزة
+              // بطاقة عرض الأجهزة.
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -286,11 +290,8 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'الأجهزة',
-                            style: theme.textTheme.titleLarge,
-                          ),
-                          // إخفاء زر إضافة الأجهزة للمعامل المغلقة
+                          Text('الأجهزة', style: theme.textTheme.titleLarge),
+                          // إخفاء زر إضافة جهاز إذا كان المعمل مغلقًا.
                           if (_currentLab.status != LabStatus.closed)
                             IconButton(
                               icon: const Icon(Icons.add),
@@ -298,40 +299,39 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) => AddDeviceScreen(
-                                      labId: _currentLab.id,
-                                    ),
+                                    builder: (context) =>
+                                        AddDeviceScreen(labId: _currentLab.id),
                                   ),
-                                ).then((_) => _loadDevices());
+                                ).then((_) =>
+                                    _loadDevices()); // تحديث قائمة الأجهزة بعد الإضافة.
                               },
                             ),
                         ],
                       ),
                       const SizedBox(height: 16),
-                      // إخفاء قسم الأجهزة للمعامل المغلقة
+                      // إخفاء قسم الأجهزة بالكامل إذا كان المعمل مغلقًا.
                       if (_currentLab.status != LabStatus.closed)
                         _isLoading
                             ? const Center(child: CircularProgressIndicator())
                             : _devices.isEmpty
+                                // عرض رسالة في حال عدم وجود أجهزة.
                                 ? Center(
                                     child: Column(
                                       children: [
-                                        Icon(
-                                          Icons.computer_outlined,
-                                          size: 64,
-                                          color: theme.colorScheme.primary
-                                              .withAlpha(128), // 0.5 opacity
-                                        ),
+                                        Icon(Icons.computer_outlined,
+                                            size: 64,
+                                            color: theme.colorScheme.primary
+                                                .withAlpha(128)),
                                         const SizedBox(height: 16),
-                                        Text(
-                                          'لا توجد أجهزة مسجلة',
-                                          style: theme.textTheme.titleMedium,
-                                        ),
+                                        Text('لا توجد أجهزة مسجلة',
+                                            style: theme.textTheme.titleMedium),
                                       ],
                                     ),
                                   )
+                                // عرض قائمة الأجهزة.
                                 : ListView.builder(
-                                    shrinkWrap: true,
+                                    shrinkWrap:
+                                        true, // لمنع التعارض مع SingleChildScrollView.
                                     physics:
                                         const NeverScrollableScrollPhysics(),
                                     itemCount: _devices.length,
@@ -341,6 +341,21 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                                         margin:
                                             const EdgeInsets.only(bottom: 8),
                                         child: ListTile(
+                                          leading: device.imagePath != null &&
+                                                  device.imagePath!
+                                                      .startsWith('http')
+                                              ? CircleAvatar(
+                                                  backgroundImage: NetworkImage(
+                                                      device.imagePath!),
+                                                  onBackgroundImageError:
+                                                      (exception, stackTrace) {
+                                                    debugPrint(
+                                                        'Error loading device image: $exception');
+                                                  },
+                                                )
+                                              : const CircleAvatar(
+                                                  child: Icon(Icons.computer),
+                                                ),
                                           title: Text(device.name),
                                           subtitle: Column(
                                             crossAxisAlignment:
@@ -350,6 +365,7 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                                               Text(device.serialNumber),
                                             ],
                                           ),
+                                          // تغيير الأيقونة بناءً على حالة الصيانة.
                                           trailing: Icon(
                                             device.needsMaintenance
                                                 ? Icons.build_circle
@@ -359,43 +375,39 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
                                                 : Colors.green,
                                           ),
                                           onTap: () {
+                                            // الانتقال إلى شاشة عرض الجهاز (ViewDeviceScreen)
                                             Navigator.push(
+                                              // <--- تم التغيير هنا
                                               context,
                                               MaterialPageRoute(
-                                                builder: (context) =>
-                                                    AddDeviceScreen(
-                                                        device: device),
-                                              ),
-                                            ).then((_) => _loadDevices());
+                                                  builder: (context) =>
+                                                      ViewDeviceScreen(
+                                                          // <--- تم التغيير هنا
+                                                          device: device)),
+                                            ).then((_) =>
+                                                _loadDevices()); // تحديث القائمة بعد العودة.
                                           },
                                         ),
                                       );
                                     },
                                   )
                       else
+                        // عرض رسالة بأن المعمل مغلق.
                         Center(
                           child: Column(
                             children: [
-                              Icon(
-                                Icons.lock_outlined,
-                                size: 64,
-                                color: theme.colorScheme.error
-                                    .withAlpha(128), // 0.5 opacity
-                              ),
+                              Icon(Icons.lock_outlined,
+                                  size: 64,
+                                  color:
+                                      theme.colorScheme.error.withAlpha(128)),
                               const SizedBox(height: 16),
-                              Text(
-                                'المعمل مغلق',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: theme.colorScheme.error,
-                                ),
-                              ),
-                              Text(
-                                'لا يمكن إضافة أو عرض الأجهزة',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: theme.colorScheme.error
-                                      .withAlpha(179), // 0.7 opacity
-                                ),
-                              ),
+                              Text('المعمل مغلق',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                      color: theme.colorScheme.error)),
+                              Text('لا يمكن إضافة أو عرض الأجهزة',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.error
+                                          .withAlpha(179))),
                             ],
                           ),
                         ),
@@ -410,28 +422,62 @@ class _LabDetailsScreenState extends State<LabDetailsScreen> {
     );
   }
 
-  // دالة مساعدة لبناء صف التفاصيل
-  Widget _buildDetailRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    Color? color,
-  }) {
+  //------------------------------------------------------------------------------
+
+  /// دالة مساعدة قابلة لإعادة الاستخدام لبناء صف تفصيلي منسق.
+  Widget _buildDetailRow(
+      {required IconData icon,
+      required String label,
+      required String value,
+      Color? color}) {
     return Row(
       children: [
         Icon(icon, color: color ?? Colors.grey[700]),
         const SizedBox(width: 12),
-        Text(
-          '$label: ',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: TextStyle(color: color),
-          ),
-        ),
+        Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+        Expanded(child: Text(value, style: TextStyle(color: color))),
       ],
     );
+  }
+}
+
+//------------------------------------------------------------------------------
+
+/// إضافة Getters إلى Enum لتحسين قراءة الكود في واجهة المستخدم وتجميع المنطق.
+extension LabStatusExtension on LabStatus {
+  /// ترجع نصاً قابلاً للعرض لحالة المعمل.
+  String get displayName {
+    switch (this) {
+      case LabStatus.openWithDevices:
+        return 'مفتوح مع أجهزة';
+      case LabStatus.openNoDevices:
+        return 'يوجد مشكلة';
+      case LabStatus.closed:
+        return 'مغلق';
+    }
+  }
+
+  /// ترجع أيقونة مناسبة لحالة المعمل.
+  IconData get icon {
+    switch (this) {
+      case LabStatus.openWithDevices:
+        return Icons.check_circle;
+      case LabStatus.openNoDevices:
+        return Icons.warning;
+      case LabStatus.closed:
+        return Icons.cancel;
+    }
+  }
+
+  /// ترجع لوناً مناسباً لحالة المعمل.
+  Color get color {
+    switch (this) {
+      case LabStatus.openWithDevices:
+        return Colors.green;
+      case LabStatus.openNoDevices:
+        return Colors.orange;
+      case LabStatus.closed:
+        return Colors.red;
+    }
   }
 }

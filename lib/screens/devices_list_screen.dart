@@ -1,26 +1,26 @@
 import 'package:flutter/material.dart';
-import '../models/lab_model.dart'; // نموذج بيانات المعمل.
 import '../models/device_model.dart'; // نموذج بيانات الجهاز.
+import '../models/lab_model.dart'; // نموذج بيانات المعمل.
 import 'package:uquts1/services/firebase_database_service.dart';
 import '../utils/device_form_constants.dart'; // ثوابت وقوائم مستخدمة في الفورم.
 import '../utils/ui_helpers.dart'; // دوال مساعدة لعرض عناصر واجهة المستخدم.
-import 'add_lab_screen.dart'; // شاشة إضافة معمل.
-import 'lab_details_screen.dart'; // شاشة تفاصيل المعمل.
+import 'add_device_screen.dart'; // شاشة إضافة/تعديل جهاز.
+import 'view_device_screen.dart'; // الشاشة الجديدة لعرض الجهاز فقط.
 
 //------------------------------------------------------------------------------
 
-/// ويدجت شاشة قائمة المعامل، وهي StatefulWidget لإدارة الحالات الداخلية مثل البحث والتصفية.
-class LabsListScreen extends StatefulWidget {
-  const LabsListScreen({super.key});
+/// ويدجت شاشة قائمة الأجهزة، وهي StatefulWidget لإدارة الحالات الداخلية مثل البحث والتصفية.
+class DevicesListScreen extends StatefulWidget {
+  const DevicesListScreen({super.key});
 
   @override
-  State<LabsListScreen> createState() => _LabsListScreenState();
+  State<DevicesListScreen> createState() => _DevicesListScreenState();
 }
 
 //------------------------------------------------------------------------------
 
-/// كلاس الحالة (State) الخاص بـ LabsListScreen.
-class _LabsListScreenState extends State<LabsListScreen> {
+/// كلاس الحالة (State) الخاص بـ DevicesListScreen.
+class _DevicesListScreenState extends State<DevicesListScreen> {
   // --- ثوابت لتنظيم الكود وتوحيد التصميم ---
   static const double _defaultPadding = 16.0;
   static const double _iconSize = 64.0;
@@ -28,25 +28,26 @@ class _LabsListScreenState extends State<LabsListScreen> {
   //------------------------------------------------------------------------------
 
   // --- متغيرات الحالة (State Variables) ---
-  /// لتخزين القائمة الكاملة للمعامل من قاعدة البيانات.
-  List<LabModel> _allLabs = [];
+  /// لتخزين القائمة الكاملة للأجهزة من قاعدة البيانات.
+  List<DeviceModel> _allDevices = [];
 
-  /// لتخزين القائمة المصفاة التي يتم عرضها للمستخدم.
-  List<LabModel> _filteredLabs = [];
+  /// لتخزين القائمة المصفاة التي يتم عرضها للمستخدم بعد تطبيق البحث والفلاتر.
+  List<DeviceModel> _filteredDevices = [];
 
-  /// لتتبع حالة التحميل.
+  /// لتتبع حالة التحميل وعرض مؤشر التحميل.
   bool _isLoading = true;
-
-  /// متغير لتتبع عدد الأجهزة في كل معمل لتحسين الأداء.
-  Map<String, int> _labDeviceCounts = {};
 
   //------------------------------------------------------------------------------
 
   // --- متحكمات البحث والتصفية ---
+  /// متحكم حقل البحث النصي.
   final TextEditingController _searchController = TextEditingController();
-  LabStatus? _selectedStatus;
+
+  /// متغيرات لتخزين قيم الفلاتر المختارة حاليًا.
   String? _selectedCollege;
-  String? _selectedFloor;
+  String? _selectedDepartment;
+  bool?
+      _selectedNeedsMaintenance; // null: الكل, true: يحتاج صيانة, false: لا يحتاج صيانة
 
   //------------------------------------------------------------------------------
 
@@ -54,14 +55,9 @@ class _LabsListScreenState extends State<LabsListScreen> {
   @override
   void initState() {
     super.initState();
-    // تعيين القيمة الافتراضية للفلاتر (null يعني "الكل").
-    _selectedCollege = null;
-    _selectedFloor = null;
-    _selectedStatus = null;
-
-    _loadLabs(); // تحميل قائمة المعامل.
-    // إضافة مستمع لحقل البحث لتحديث القائمة تلقائيًا.
-    _searchController.addListener(_filterLabs);
+    _loadDevices(); // تحميل قائمة الأجهزة عند بدء الشاشة.
+    // إضافة مستمع لحقل البحث لتحديث القائمة تلقائيًا عند كل تغيير في النص.
+    _searchController.addListener(_filterDevices);
   }
 
   //------------------------------------------------------------------------------
@@ -75,78 +71,61 @@ class _LabsListScreenState extends State<LabsListScreen> {
 
   //------------------------------------------------------------------------------
 
-  /// دالة غير متزامنة لتحميل بيانات المعامل وعدد الأجهزة المرتبطة بها.
-  Future<void> _loadLabs() async {
+  /// دالة غير متزامنة لتحميل القائمة الكاملة للأجهزة من قاعدة البيانات.
+  Future<void> _loadDevices() async {
     try {
       setState(() => _isLoading = true);
-
-      // جلب البيانات من قاعدة البيانات.
-      final labs = await FirebaseDatabaseService.getLabs();
       final devices = await FirebaseDatabaseService.getDevices();
-
-      // حساب عدد الأجهزة لكل معمل مرة واحدة لتحسين الأداء.
-      final labDeviceCounts = _calculateLabDeviceCounts(devices);
-
       setState(() {
-        _allLabs = labs;
-        _labDeviceCounts = labDeviceCounts;
+        _allDevices = devices;
         _isLoading = false;
       });
-      _filterLabs(); // تطبيق الفلاتر بعد تحميل البيانات
+      _filterDevices(); // تطبيق الفلاتر المبدئية بعد تحميل البيانات.
     } catch (e) {
-      _handleLoadError(e);
+      _handleLoadError(e); // معالجة أي خطأ يحدث أثناء التحميل.
     }
   }
 
   //------------------------------------------------------------------------------
 
-  /// دالة مساعدة لحساب عدد الأجهزة لكل معمل وتخزينها في خريطة.
-  Map<String, int> _calculateLabDeviceCounts(List<DeviceModel> devices) {
-    final labDeviceCounts = <String, int>{};
-    for (var device in devices) {
-      if (device.labId.isNotEmpty) {
-        labDeviceCounts[device.labId] =
-            (labDeviceCounts[device.labId] ?? 0) + 1;
-      }
-    }
-    return labDeviceCounts;
-  }
-
-  //------------------------------------------------------------------------------
-
-  /// دالة لمعالجة الأخطاء عند تحميل البيانات.
+  /// دالة مخصصة لمعالجة الأخطاء التي قد تحدث أثناء تحميل البيانات.
   void _handleLoadError(dynamic error) {
     setState(() => _isLoading = false);
     UIHelpers.showSnackBar(
         context: context,
-        message: 'خطأ في تحميل المعامل: $error',
+        message: 'خطأ في تحميل الأجهزة: $error',
         type: SnackBarType.error);
   }
 
   //------------------------------------------------------------------------------
 
   /// دالة التصفية المحورية التي يتم استدعاؤها عند أي تغيير في البحث أو الفلاتر.
-  void _filterLabs() {
+  void _filterDevices() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredLabs = _allLabs.where((lab) {
-        // شرط البحث النصي: يطابق رقم المعمل، الكلية، أو القسم.
-        final matchesSearch = lab.labNumber.toLowerCase().contains(query) ||
-            lab.college.toLowerCase().contains(query) ||
-            lab.department.toLowerCase().contains(query);
+      _filteredDevices = _allDevices.where((device) {
+        // شرط البحث النصي: يطابق اسم الجهاز، الموديل، الرقم التسلسلي، الكلية، أو القسم.
+        final matchesSearch = device.name.toLowerCase().contains(query) ||
+            device.model.toLowerCase().contains(query) ||
+            device.serialNumber.toLowerCase().contains(query) ||
+            device.college.toLowerCase().contains(query) ||
+            device.department.toLowerCase().contains(query);
 
-        // شرط فلتر الكلية.
+        // شرط فلتر الكلية: إذا لم يتم تحديد كلية، يتم قبول جميع الأجهزة.
         final matchesCollege =
-            _selectedCollege == null || lab.college == _selectedCollege;
-        // شرط فلتر الدور.
-        final matchesFloor =
-            _selectedFloor == null || lab.floorNumber == _selectedFloor;
-        // شرط فلتر الحالة.
-        final matchesStatus =
-            _selectedStatus == null || lab.status == _selectedStatus;
+            _selectedCollege == null || device.college == _selectedCollege;
+        // شرط فلتر القسم.
+        final matchesDepartment = _selectedDepartment == null ||
+            device.department == _selectedDepartment;
+        // شرط فلتر حالة الصيانة: إذا لم يتم تحديد حالة، يتم قبول جميع الأجهزة.
+        final matchesMaintenance = _selectedNeedsMaintenance == null ||
+            device.needsMaintenance == _selectedNeedsMaintenance;
 
-        // إرجاع المعامل التي تحقق جميع الشروط.
-        return matchesSearch && matchesCollege && matchesFloor && matchesStatus;
+        // إرجاع الأجهزة التي تحقق جميع الشروط المطبقة.
+        return matchesSearch &&
+            matchesCollege &&
+            matchesDepartment &&
+            matchesMaintenance;
       }).toList();
     });
   }
@@ -162,24 +141,26 @@ class _LabsListScreenState extends State<LabsListScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
+        // استخدام DraggableScrollableSheet يسمح للمستخدم بسحب الورقة لتغيير ارتفاعها.
         return DraggableScrollableSheet(
           initialChildSize: 0.6, // الارتفاع الأولي.
           minChildSize: 0.3, // أصغر ارتفاع.
           maxChildSize: 0.9, // أكبر ارتفاع.
-          expand: false, // مهم لكي لا تتجاوز حدود الشاشة
+          expand: false, // مهم لكي لا تتجاوز حدود الشاشة.
           builder: (context, scrollController) {
-            return FilterBottomSheet(
+            return DeviceFilterBottomSheet(
               scrollController: scrollController,
               initialSelectedCollege: _selectedCollege,
-              initialSelectedFloor: _selectedFloor,
-              initialSelectedStatus: _selectedStatus,
-              onApplyFilters: (college, floor, status) {
+              initialSelectedDepartment: _selectedDepartment,
+              initialSelectedNeedsMaintenance: _selectedNeedsMaintenance,
+              onApplyFilters: (college, department, needsMaintenance) {
+                // عند تطبيق الفلاتر، يتم تحديث متغيرات الحالة واستدعاء دالة التصفية.
                 setState(() {
                   _selectedCollege = college;
-                  _selectedFloor = floor;
-                  _selectedStatus = status;
+                  _selectedDepartment = department;
+                  _selectedNeedsMaintenance = needsMaintenance;
                 });
-                _filterLabs(); // تطبيق الفلاتر الجديدة
+                _filterDevices(); // تطبيق الفلاتر الجديدة.
               },
             );
           },
@@ -190,13 +171,14 @@ class _LabsListScreenState extends State<LabsListScreen> {
 
   //------------------------------------------------------------------------------
 
-  /// دالة للانتقال إلى شاشة تفاصيل المعمل.
-  void _navigateToLabDetails(LabModel lab) {
+  /// دالة للانتقال إلى شاشة عرض الجهاز وتحديث القائمة عند العودة.
+  void _navigateToDeviceView(DeviceModel device) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => LabDetailsScreen(lab: lab)),
-      // استخدام .then() لتحديث القائمة تلقائيًا بعد العودة من شاشة التفاصيل.
-    ).then((_) => _loadLabs());
+      MaterialPageRoute(
+          builder: (context) => ViewDeviceScreen(
+              device: device)), // <--- الانتقال إلى شاشة العرض الجديدة.
+    ).then((_) => _loadDevices()); // تحديث القائمة بالكامل بعد العودة.
   }
 
   //------------------------------------------------------------------------------
@@ -207,7 +189,7 @@ class _LabsListScreenState extends State<LabsListScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('المعامل'),
+        title: const Text('سجل الأجهزة'),
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
         actions: [
@@ -219,16 +201,16 @@ class _LabsListScreenState extends State<LabsListScreen> {
             onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (context) => const AddLabScreen()))
-                .then((_) => _loadLabs()),
+                        builder: (context) => const AddDeviceScreen()))
+                .then((_) => _loadDevices()),
           ),
         ],
       ),
       body: Column(
         children: [
           _buildSearchBar(theme), // بناء حقل البحث.
-          // جعل قائمة المعامل تمتد لملء المساحة المتبقية.
-          Expanded(child: _buildLabsList(theme)),
+          // جعل قائمة الأجهزة تمتد لملء المساحة المتبقية.
+          Expanded(child: _buildDevicesList(theme)),
         ],
       ),
     );
@@ -243,14 +225,14 @@ class _LabsListScreenState extends State<LabsListScreen> {
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
-          hintText: 'البحث في المعامل',
+          hintText: 'البحث في الأجهزة',
           prefixIcon: const Icon(Icons.search),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
                   icon: const Icon(Icons.clear),
                   onPressed: () {
                     _searchController.clear();
-                    // _filterLabs() سيتم استدعاؤها تلقائيًا بواسطة المستمع.
+                    // _filterDevices() سيتم استدعاؤها تلقائيًا بواسطة المستمع.
                   },
                 )
               : null,
@@ -262,38 +244,40 @@ class _LabsListScreenState extends State<LabsListScreen> {
 
   //------------------------------------------------------------------------------
 
-  /// ويدجت مساعد لبناء قائمة المعامل، ويعمل كآلة حالة.
-  Widget _buildLabsList(ThemeData theme) {
+  /// ويدجت مساعد لبناء قائمة الأجهزة، ويعمل كـ "آلة حالة" للواجهة.
+  Widget _buildDevicesList(ThemeData theme) {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_filteredLabs.isEmpty) {
+    if (_filteredDevices.isEmpty) {
+      // إذا كانت القائمة المصفاة فارغة، يتم عرض واجهة توضيحية.
       return _buildEmptyView(theme);
     }
+    // إذا كانت هناك بيانات، يتم عرض القائمة.
     return ListView.builder(
       padding: const EdgeInsets.all(_defaultPadding),
-      itemCount: _filteredLabs.length,
+      itemCount: _filteredDevices.length,
       itemBuilder: (context, index) =>
-          _buildLabItem(theme, _filteredLabs[index]),
+          _buildDeviceItem(theme, _filteredDevices[index]),
     );
   }
 
   //------------------------------------------------------------------------------
 
-  /// ويدجت مساعد لبناء واجهة المستخدم في حالة عدم وجود معامل.
+  /// ويدجت مساعد لبناء واجهة المستخدم في حالة عدم وجود أجهزة تطابق البحث.
   Widget _buildEmptyView(ThemeData theme) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.science_outlined,
+          Icon(Icons.computer_outlined,
               size: _iconSize, color: theme.colorScheme.primary.withAlpha(128)),
           const SizedBox(height: _defaultPadding),
-          Text('لا توجد معامل تطابق البحث',
+          Text('لا توجد أجهزة تطابق البحث',
               style: theme.textTheme.titleLarge?.copyWith(
                   color: theme.colorScheme.onSurface.withAlpha(178))),
           const SizedBox(height: 8),
-          Text('جرّب تغيير فلاتر البحث أو أضف معملاً جديدًا',
+          Text('جرّب تغيير فلاتر البحث أو أضف جهازًا جديدًا',
               style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurface.withAlpha(128))),
         ],
@@ -303,117 +287,83 @@ class _LabsListScreenState extends State<LabsListScreen> {
 
   //------------------------------------------------------------------------------
 
-  /// ويدجت مساعد لبناء عنصر واحد (بطاقة) في قائمة المعامل.
-  Widget _buildLabItem(ThemeData theme, LabModel lab) {
-    final deviceCount = _labDeviceCounts[lab.id] ?? 0;
-
+  /// ويدجت مساعد لبناء عنصر واحد (بطاقة) في قائمة الأجهزة.
+  Widget _buildDeviceItem(ThemeData theme, DeviceModel device) {
     return Card(
       margin: const EdgeInsets.only(bottom: _defaultPadding),
       child: ListTile(
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('معمل ${lab.labNumber}'),
-            _buildDeviceCountBadge(theme, deviceCount), // شارة عدد الأجهزة.
-          ],
-        ),
+        leading:
+            device.imagePath != null && device.imagePath!.startsWith('http')
+                ? CircleAvatar(
+                    backgroundImage: NetworkImage(device.imagePath!),
+                    onBackgroundImageError: (exception, stackTrace) {
+                      debugPrint('Error loading device image: $exception');
+                    },
+                  )
+                : const CircleAvatar(
+                    child: Icon(Icons.computer),
+                  ),
+        title: Text(device.name),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [Text(lab.college), Text(lab.department)],
+          children: [
+            Text('الموديل: ${device.model}'),
+            Text('الرقم التسلسلي: ${device.serialNumber}'),
+            Text('المعمل: ${device.college} - ${device.department}'),
+          ],
         ),
-        trailing: _buildStatusIcon(lab.status), // أيقونة الحالة.
-        onTap: () => _navigateToLabDetails(lab),
+        trailing: Icon(
+          device.needsMaintenance ? Icons.build_circle : Icons.check_circle,
+          color: device.needsMaintenance ? Colors.orange : Colors.green,
+        ),
+        onTap: () =>
+            _navigateToDeviceView(device), // <--- ينقل لـ ViewDeviceScreen
       ),
     );
-  }
-
-  //------------------------------------------------------------------------------
-
-  /// ويدجت مساعد لبناء شارة منسقة لعرض عدد الأجهزة.
-  Widget _buildDeviceCountBadge(ThemeData theme, int deviceCount) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: deviceCount > 0
-            ? theme.colorScheme.primary.withAlpha(26)
-            : theme.colorScheme.error.withAlpha(26),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        'عدد الأجهزة: $deviceCount',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: deviceCount > 0
-              ? theme.colorScheme.primary
-              : theme.colorScheme.error,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  //------------------------------------------------------------------------------
-
-  /// ويدجت مساعد لبناء أيقونة الحالة مع اللون المناسب.
-  Widget _buildStatusIcon(LabStatus status) {
-    IconData icon;
-    Color color;
-    switch (status) {
-      case LabStatus.openWithDevices:
-        icon = Icons.check_circle;
-        color = Colors.green;
-        break;
-      case LabStatus.openNoDevices:
-        icon = Icons.warning;
-        color = Colors.orange;
-        break;
-      case LabStatus.closed:
-        icon = Icons.cancel;
-        color = Colors.red;
-        break;
-    }
-    return Icon(icon, color: color);
   }
 }
 
 //------------------------------------------------------------------------------
 
-/// ويدجت Bottom Sheet المخصصة للفلاتر.
-class FilterBottomSheet extends StatefulWidget {
+/// ويدجت Bottom Sheet المخصصة لفلاتر الأجهزة.
+/// تم فصلها في ويدجت خاص بها لتنظيم الكود وإدارة حالتها المؤقتة بشكل مستقل.
+class DeviceFilterBottomSheet extends StatefulWidget {
   final ScrollController scrollController;
   final String? initialSelectedCollege;
-  final String? initialSelectedFloor;
-  final LabStatus? initialSelectedStatus;
-  final Function(String?, String?, LabStatus?) onApplyFilters;
+  final String? initialSelectedDepartment;
+  final bool? initialSelectedNeedsMaintenance;
+  final Function(String?, String?, bool?) onApplyFilters;
 
-  const FilterBottomSheet({
+  const DeviceFilterBottomSheet({
     Key? key,
     required this.scrollController,
     this.initialSelectedCollege,
-    this.initialSelectedFloor,
-    this.initialSelectedStatus,
+    this.initialSelectedDepartment,
+    this.initialSelectedNeedsMaintenance,
     required this.onApplyFilters,
   }) : super(key: key);
 
   @override
-  State<FilterBottomSheet> createState() => _FilterBottomSheetState();
+  State<DeviceFilterBottomSheet> createState() =>
+      _DeviceFilterBottomSheetState();
 }
 
 //------------------------------------------------------------------------------
 
-/// كلاس الحالة الخاص بـ FilterBottomSheet.
-class _FilterBottomSheetState extends State<FilterBottomSheet> {
+/// كلاس الحالة الخاص بـ DeviceFilterBottomSheet.
+class _DeviceFilterBottomSheetState extends State<DeviceFilterBottomSheet> {
   // متغيرات حالة مؤقتة لتخزين اختيارات المستخدم داخل الـ Bottom Sheet.
   String? _tempSelectedCollege;
-  String? _tempSelectedFloor;
-  LabStatus? _tempSelectedStatus;
+  String? _tempSelectedDepartment;
+  bool? _tempSelectedNeedsMaintenance;
 
-  /// تهيئة الحالة المؤقتة بالقيم الحالية للفلاتر.
+  /// تهيئة الحالة المؤقتة بالقيم الحالية للفلاتر عند فتح الـ Bottom Sheet.
   @override
   void initState() {
     super.initState();
     _tempSelectedCollege = widget.initialSelectedCollege;
-    _tempSelectedFloor = widget.initialSelectedFloor;
-    _tempSelectedStatus = widget.initialSelectedStatus;
+    _tempSelectedDepartment = widget.initialSelectedDepartment;
+    _tempSelectedNeedsMaintenance = widget.initialSelectedNeedsMaintenance;
   }
 
   /// دالة بناء واجهة المستخدم الخاصة بالـ Bottom Sheet.
@@ -423,8 +373,11 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
 
     // تجهيز قوائم الفلاتر مع إضافة خيار "الكل" (الذي يمثله 'null').
     final List<String?> colleges = [null, ...DeviceFormConstants.colleges];
-    final List<String?> floors = [null, ...DeviceFormConstants.floors];
-    final List<LabStatus?> statuses = [null, ...LabStatus.values];
+    final List<String?> departments = [null];
+    if (_tempSelectedCollege != null) {
+      departments
+          .addAll(DeviceFormConstants.departments[_tempSelectedCollege] ?? []);
+    }
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -440,13 +393,14 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'تصفية المعامل',
+                'تصفية الأجهزة',
                 style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
 
+              // قائمة قابلة للتمرير تحتوي على جميع خيارات الفلاتر.
               Expanded(
                 child: ListView(
                   controller: widget.scrollController,
@@ -462,6 +416,8 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                           onChanged: (value) {
                             setState(() {
                               _tempSelectedCollege = value;
+                              _tempSelectedDepartment =
+                                  null; // إعادة تعيين القسم عند تغيير الكلية
                             });
                           },
                         );
@@ -469,46 +425,67 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                     ),
                     const SizedBox(height: 10),
 
-                    // فلتر الدور
-                    _buildFilterSection(
-                      title: 'الدور',
-                      children: floors.map((floor) {
-                        return RadioListTile<String?>(
-                          title: Text(floor ?? 'جميع الأدوار'),
-                          value: floor,
-                          groupValue: _tempSelectedFloor,
-                          onChanged: (value) {
-                            setState(() {
-                              _tempSelectedFloor = value;
-                            });
-                          },
-                        );
-                      }).toList(),
-                    ),
+                    // فلتر القسم (يظهر فقط عند اختيار كلية).
+                    if (_tempSelectedCollege != null)
+                      _buildFilterSection(
+                        title: 'القسم',
+                        children: departments.map((department) {
+                          return RadioListTile<String?>(
+                            title: Text(department ?? 'جميع الأقسام'),
+                            value: department,
+                            groupValue: _tempSelectedDepartment,
+                            onChanged: (value) {
+                              setState(() {
+                                _tempSelectedDepartment = value;
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
                     const SizedBox(height: 10),
 
-                    // فلتر الحالة
+                    // فلتر حالة الصيانة.
                     _buildFilterSection(
-                      title: 'الحالة',
-                      children: statuses.map((status) {
-                        return RadioListTile<LabStatus?>(
-                          title: Text(
-                              status == null ? 'الكل' : status.displayName),
-                          value: status,
-                          groupValue: _tempSelectedStatus,
+                      title: 'حالة الصيانة',
+                      children: [
+                        RadioListTile<bool?>(
+                          title: const Text('الكل'),
+                          value: null,
+                          groupValue: _tempSelectedNeedsMaintenance,
                           onChanged: (value) {
                             setState(() {
-                              _tempSelectedStatus = value;
+                              _tempSelectedNeedsMaintenance = value;
                             });
                           },
-                        );
-                      }).toList(),
+                        ),
+                        RadioListTile<bool?>(
+                          title: const Text('يحتاج صيانة'),
+                          value: true,
+                          groupValue: _tempSelectedNeedsMaintenance,
+                          onChanged: (value) {
+                            setState(() {
+                              _tempSelectedNeedsMaintenance = value;
+                            });
+                          },
+                        ),
+                        RadioListTile<bool?>(
+                          title: const Text('لا يحتاج صيانة'),
+                          value: false,
+                          groupValue: _tempSelectedNeedsMaintenance,
+                          onChanged: (value) {
+                            setState(() {
+                              _tempSelectedNeedsMaintenance = value;
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
 
+              // أزرار التحكم في الفلاتر (تطبيق أو مسح).
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
@@ -517,8 +494,8 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                       onPressed: () {
                         setState(() {
                           _tempSelectedCollege = null;
-                          _tempSelectedFloor = null;
-                          _tempSelectedStatus = null;
+                          _tempSelectedDepartment = null;
+                          _tempSelectedNeedsMaintenance = null;
                         });
                       },
                       style: ElevatedButton.styleFrom(
@@ -535,11 +512,12 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                   Expanded(
                     child: FilledButton(
                       onPressed: () {
-                        Navigator.pop(context); // إغلاق الورقة السفلية
+                        Navigator.pop(context); // إغلاق الورقة السفلية.
+                        // استدعاء الدالة الممررة من الشاشة الرئيسية لتطبيق الفلاتر.
                         widget.onApplyFilters(
                           _tempSelectedCollege,
-                          _tempSelectedFloor,
-                          _tempSelectedStatus,
+                          _tempSelectedDepartment,
+                          _tempSelectedNeedsMaintenance,
                         );
                       },
                       style: FilledButton.styleFrom(
@@ -552,7 +530,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10), // هامش سفلي
+              const SizedBox(height: 10), // هامش سفلي.
             ],
           ),
         ),
@@ -577,7 +555,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
         ),
         const SizedBox(height: 8),
         ...children,
-        const Divider(), // فاصل بين الأقسام
+        const Divider(), // فاصل بين الأقسام.
       ],
     );
   }
